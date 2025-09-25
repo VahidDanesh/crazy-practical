@@ -8,8 +8,8 @@ An advanced autonomous flight system for the Crazyflie platform with comprehensi
 
 1. **Clone and install:**
    ```bash
-   git clone <repository-url>
-   cd crazy-practical
+   git clone https://github.com/VahidDanesh/cfpilot.git
+   cd cfpilot
    pip install -e .
    ```
 
