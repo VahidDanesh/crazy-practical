@@ -12,11 +12,15 @@ from .controller import CrazyflieController
 from .detection import LandingPadDetector, SearchPattern
 from .missions import BasicFlightMission, SensorExplorationMission, LandingPadDetectionMission
 
-__all__ = [
-    "CrazyflieController",
-    "LandingPadDetector", 
-    "SearchPattern",
-    "BasicFlightMission",
-    "SensorExplorationMission", 
-    "LandingPadDetectionMission",
-]
+try:
+    from .visualization import PointCloudPlotter
+    __all__ = [
+        "CrazyflieController", "LandingPadDetector", "SearchPattern",
+        "BasicFlightMission", "SensorExplorationMission", "LandingPadDetectionMission",
+        "PointCloudPlotter"
+    ]
+except ImportError:
+    __all__ = [
+        "CrazyflieController", "LandingPadDetector", "SearchPattern", 
+        "BasicFlightMission", "SensorExplorationMission", "LandingPadDetectionMission"
+    ]

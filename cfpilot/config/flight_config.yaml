@@ -13,7 +13,7 @@ flight:
 
 safety:
   max_flight_time: 30.0         # seconds - auto-land after this time
-  battery_threshold: 3.2        # volts - emergency land below this
+  battery_threshold: 3.0        # volts - emergency land below this
   connection_timeout: 5.0       # seconds - emergency land if connection lost
   emergency_land_velocity: 0.5  # m/s - fast emergency landing
 

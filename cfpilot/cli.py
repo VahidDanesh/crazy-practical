@@ -25,10 +25,10 @@ def setup_logging(level: str = "INFO") -> None:
     )
 
 
-def run_basic_flight(config_path: Optional[str] = None) -> int:
+def run_basic_flight(config_path: Optional[str] = None, enable_plot: bool = True) -> int:
     """Run basic flight mission"""
     try:
-        controller = CrazyflieController(config_path)
+        controller = CrazyflieController(config_path, enable_plotting=enable_plot)
         mission = BasicFlightMission(controller)
         mission.execute()
         return 0
@@ -40,10 +40,10 @@ def run_basic_flight(config_path: Optional[str] = None) -> int:
         return 1
 
 
-def run_sensor_exploration(config_path: Optional[str] = None) -> int:
+def run_sensor_exploration(config_path: Optional[str] = None, enable_plot: bool = True) -> int:
     """Run sensor exploration mission"""
     try:
-        controller = CrazyflieController(config_path)
+        controller = CrazyflieController(config_path, enable_plotting=enable_plot)
         mission = SensorExplorationMission(controller)
         mission.execute()
         return 0
@@ -55,10 +55,10 @@ def run_sensor_exploration(config_path: Optional[str] = None) -> int:
         return 1
 
 
-def run_landing_pad_detection(config_path: Optional[str] = None) -> int:
+def run_landing_pad_detection(config_path: Optional[str] = None, enable_plot: bool = True) -> int:
     """Run landing pad detection mission"""
     try:
-        controller = CrazyflieController(config_path)
+        controller = CrazyflieController(config_path, enable_plotting=enable_plot)
         mission = LandingPadDetectionMission(controller)
         mission.execute()
         return 0
@@ -104,6 +104,12 @@ Examples:
     )
     
     parser.add_argument(
+        '--plot', '-p',
+        action='store_true',
+        help='Enable real-time 3D point cloud visualization'
+    )
+    
+    parser.add_argument(
         '--version',
         action='version',
         version='CFPilot 1.0.0'
@@ -116,11 +122,11 @@ Examples:
     
     # Execute mission
     if args.mission == 'basic':
-        exit_code = run_basic_flight(args.config)
+        exit_code = run_basic_flight(args.config, args.plot)
     elif args.mission == 'sensor':
-        exit_code = run_sensor_exploration(args.config)
+        exit_code = run_sensor_exploration(args.config, args.plot)
     elif args.mission == 'landing':
-        exit_code = run_landing_pad_detection(args.config)
+        exit_code = run_landing_pad_detection(args.config, args.plot)
     else:
         parser.error(f"Unknown mission: {args.mission}")
     

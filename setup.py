@@ -18,12 +18,12 @@ with open('requirements.txt') as f:
 setup(
     name="cfpilot",
     version="1.0.0",
-    author="Crazyflie Autonomous Team",
+    author="Crazyflie Autonomous Team at SBU",
     author_email="",
     description="Advanced autonomous flight system for Crazyflie platform",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/your-repo/cfpilot",
+    url="https://github.com/VahidDanesh/cfpilot.git",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 4 - Beta",
@@ -49,6 +49,10 @@ setup(
             "mypy>=1.0",
         ],
         "visualization": [
+            "vispy>=0.12.0",
+            "PyQt5>=5.15.0",
+        ],
+        "plotting": [
             "matplotlib>=3.5.0",
             "plotly>=5.0",
         ],
