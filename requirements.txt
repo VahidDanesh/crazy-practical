@@ -1,0 +1,14 @@
+# Core Crazyflie dependencies
+cflib>=0.1.18.1
+pyusb>=1.2.0
+libusb-package>=1.0.0
+scipy>=1.14.0
+numpy>=2.2.0
+
+# Configuration and utilities
+PyYAML>=6.0
+pandas>=2.0.0
+
+# Optional for enhanced features
+matplotlib>=3.5.0  # For plotting and visualization
+
