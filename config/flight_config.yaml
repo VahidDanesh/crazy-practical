@@ -17,6 +17,14 @@ safety:
   connection_timeout: 5.0  # seconds - emergency land if connection lost
   emergency_land_velocity: 0.5  # m/s - fast emergency landing
 
+# Obstacle avoidance settings
+obstacle_avoidance:
+  min_safe_distance: 0.5      # m - minimum clearance from obstacles
+  ceiling_min_distance: 1.5   # m - minimum clearance from ceiling
+  search_velocity: 0.15       # m/s - slow velocity during search for safety
+  alternative_search_radius: 0.3  # m - radius to search for safe alternatives
+  enable_during_search: false # Enable obstacle avoidance during landing pad search (false = emergency only)
+
 logging:
   period_ms: 10  # milliseconds
   log_file: "./logs/flight_log.csv"
@@ -28,3 +36,29 @@ logging:
     - "stabilizer.pitch"
     - "stabilizer.yaw"
     - "pm.vbat"
+
+# Peak detection parameters for different flight scenarios
+peak_detection:
+  # Indoor, stable environment with thin landing pad (1-3cm)
+  indoor_precise:
+    lag: 8                    # 80ms window at 100Hz logging
+    threshold: 1.5           # Sensitive to small changes
+    influence: 0.2           # Conservative baseline update
+    min_peak_height: 0.03    # 3cm minimum height difference
+  
+  # Outdoor or noisy environment with elevated platform (5-10cm)
+  outdoor_robust:
+    lag: 12                  # 120ms window for stability
+    threshold: 2.5           # Less sensitive to noise
+    influence: 0.4           # Adapts to terrain changes
+    min_peak_height: 0.01    # 1cm minimum height difference (more sensitive)
+    
+  # High-speed flight, quick detection needed
+  fast_flight:
+    lag: 5                   # 50ms window for responsiveness
+    threshold: 2.0           # Balanced sensitivity
+    influence: 0.3           # Moderate adaptation
+    min_peak_height: 0.04    # 4cm minimum height difference
+    
+  # Current active profile
+  active_profile: "indoor_precise"
