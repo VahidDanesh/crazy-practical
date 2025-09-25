@@ -1,0 +1,63 @@
+# Crazyflie Flight Configuration
+connection:
+  uri: "radio://0/88/2M/E7E7E7E7F0"
+  cache_dir: "./cache"
+
+flight:
+  default_height: 0.5           # meters
+  hover_height: 0.4             # meters
+  default_velocity: 0.3         # m/s
+  landing_velocity: 0.2         # m/s
+  hover_duration: 5.0           # seconds
+  controller: "MELLINGER"       # PID or MELLINGER
+
+safety:
+  max_flight_time: 30.0         # seconds - auto-land after this time
+  battery_threshold: 3.2        # volts - emergency land below this
+  connection_timeout: 5.0       # seconds - emergency land if connection lost
+  emergency_land_velocity: 0.5  # m/s - fast emergency landing
+
+# Obstacle avoidance settings
+obstacle_avoidance:
+  min_safe_distance: 0.5          # m - minimum clearance from obstacles
+  ceiling_min_distance: 1.5       # m - minimum clearance from ceiling
+  search_velocity: 0.15           # m/s - slow velocity during search for safety
+  alternative_search_radius: 0.3  # m - radius to search for safe alternatives
+
+logging:
+  period_ms: 10  # milliseconds
+  log_file: "./logs/flight_log.csv"
+  variables:
+    - "stateEstimate.x"
+    - "stateEstimate.y" 
+    - "stateEstimate.z"
+    - "stabilizer.roll"
+    - "stabilizer.pitch"
+    - "stabilizer.yaw"
+    - "pm.vbat"
+
+# Peak detection parameters for different flight scenarios
+peak_detection:
+  # Indoor, stable environment with thin landing pad (1-3cm)
+  indoor_precise:
+    lag: 8                    # 80ms window at 100Hz logging
+    threshold: 1.5           # Sensitive to small changes
+    influence: 0.2           # Conservative baseline update
+    min_peak_height: 0.03    # 3cm minimum height difference
+  
+  # Outdoor or noisy environment with elevated platform (5-10cm)
+  outdoor_robust:
+    lag: 12                  # 120ms window for stability
+    threshold: 2.5           # Less sensitive to noise
+    influence: 0.4           # Adapts to terrain changes
+    min_peak_height: 0.06    # 6cm minimum height difference
+    
+  # High-speed flight, quick detection needed
+  fast_flight:
+    lag: 5                   # 50ms window for responsiveness
+    threshold: 2.0           # Balanced sensitivity
+    influence: 0.3           # Moderate adaptation
+    min_peak_height: 0.04    # 4cm minimum height difference
+    
+  # Current active profile
+  active_profile: "outdoor_robust"
