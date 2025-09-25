@@ -25,7 +25,9 @@ from queue import Queue, Empty
 import cflib.crtp
 from cflib.crazyflie import Crazyflie
 from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
+from cflib.crazyflie.syncLogger import SyncLogger
 from cflib.positioning.position_hl_commander import PositionHlCommander
+from cflib.positioning.motion_commander import MotionCommander
 from cflib.crazyflie.log import LogConfig
 from cflib.utils import uri_helper
 from cflib.utils.multiranger import Multiranger
@@ -95,24 +97,24 @@ class CrazyflieController:
             self.safety_timer.cancel()
         self.logger.warning("🚨 Emergency shutdown initiated")
     
-    def _setup_logging(self, cf):
-        """Setup flight data logging"""
+    def _setup_sync_logging(self, scf):
+        """Setup synchronous flight data logging"""
         log_config = LogConfig(name='FlightData', period_in_ms=self.config['logging']['period_ms'])
         
-        # Add standard variables
-        for var in self.config['logging']['variables']:
-            log_config.add_variable(var, 'float')
+        # Add only essential variables to avoid size issues
+        essential_vars = ['stateEstimate.x', 'stateEstimate.y', 'stateEstimate.z', 'pm.vbat']
         
         try:
-            cf.log.add_config(log_config)
-            log_config.data_received_cb.add_callback(self._log_data_callback)
-            log_config.error_cb.add_callback(self._log_error_callback)
-            log_config.start()
-            self.logger.info("✅ Data logging started")
-        except KeyError as e:
-            self.logger.warning(f"Logging variable not found: {e}")
-        except AttributeError:
-            self.logger.error("Could not setup logging configuration")
+            for var in essential_vars:
+                log_config.add_variable(var, 'float')
+            
+            self.sync_logger = SyncLogger(scf, log_config)
+            self.logger.info("✅ Sync logging configured")
+            return True
+        except (KeyError, AttributeError) as e:
+            self.logger.warning(f"Logging setup failed: {e}")
+            self.logger.info("Continuing without logging...")
+            return False
     
     def _log_data_callback(self, timestamp, data, logconf):
         """Callback for flight data logging"""
@@ -135,39 +137,25 @@ class CrazyflieController:
         """Callback for logging errors"""
         self.logger.error(f"Logging error {logconf.name}: {msg}")
     
-    def _connection_callbacks(self, scf):
-        """Setup connection callbacks"""
-        scf.cf.connected.add_callback(lambda uri: self._on_connected(uri))
-        scf.cf.disconnected.add_callback(lambda uri: self._on_disconnected(uri))
-        scf.cf.connection_failed.add_callback(lambda uri, msg: self._on_connection_error(uri, msg))
-        scf.cf.connection_lost.add_callback(lambda uri, msg: self._on_connection_error(uri, msg))
-    
-    def _on_connected(self, uri):
-        """Handle successful connection"""
-        self.logger.info(f"✅ Connected to {uri}")
-        self.is_connected = True
-    
-    def _on_disconnected(self, uri):
-        """Handle disconnection"""
-        self.logger.info(f"Disconnected from {uri}")
-        self.is_connected = False
-        self.flight_active = False
-    
-    def _on_connection_error(self, uri, msg):
-        """Handle connection errors"""
-        self.logger.error(f"🚨 Connection error {uri}: {msg}")
-        self.emergency_shutdown()
+    def _log_battery_safety(self, data):
+        """Check battery safety from log data"""
+        battery_voltage = data.get('pm.vbat', 0)
+        if battery_voltage < self.config['safety']['battery_threshold'] and battery_voltage > 0:
+            self.logger.warning(f"⚠️ Low battery: {battery_voltage:.2f}V")
+            self.emergency_shutdown()
     
     def _save_flight_data(self):
         """Save flight data to CSV"""
         if not self.flight_data:
             return
-            
-        log_file = Path(self.config['logging']['log_file'])
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        
+
+        # Determine the log folder one directory above this script
+        script_dir = Path(__file__).parent
+        log_dir = script_dir.parent / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = log_file.parent / f"flight_log_{timestamp}.csv"
+        log_file = log_dir / f"flight_log_{timestamp}.csv"
         
         try:
             with open(log_file, 'w', newline='') as csvfile:
@@ -230,14 +218,20 @@ class CrazyflieController:
         
         try:
             with SyncCrazyflie(uri, cf=Crazyflie(rw_cache=cache_dir)) as scf:
-                self._connection_callbacks(scf)
-                self._setup_logging(scf.cf)
+                # Setup sync logging
+                logging_ok = self._setup_sync_logging(scf)
                 
-                # Reset and arm
+                # Set initial position to zero and reset estimator
+                scf.cf.param.set_value('kalman.initialX', '0')
+                scf.cf.param.set_value('kalman.initialY', '0') 
+                scf.cf.param.set_value('kalman.initialZ', '0')
+                time.sleep(0.1)
+                
+                # Reset Kalman filter to apply initial position
                 scf.cf.param.set_value('kalman.resetEstimation', '1')
                 time.sleep(0.1)
                 scf.cf.param.set_value('kalman.resetEstimation', '0')
-                time.sleep(2)
+                time.sleep(3)  # Extra time for estimator convergence
                 scf.cf.platform.send_arming_request(True)
                 time.sleep(1.0)
                 
@@ -248,41 +242,36 @@ class CrazyflieController:
                 )
                 self.safety_timer.start()
                 
-                controller_type = (PositionHlCommander.CONTROLLER_PID 
-                                 if self.config['flight']['controller'] == 'PID' 
-                                 else PositionHlCommander.CONTROLLER_MELLINGER)
-                
-                with PositionHlCommander(
-                    scf,
-                    x=0.0, y=0.0, z=0.0,
-                    default_velocity=self.config['flight']['default_velocity'],
-                    default_height=self.config['flight']['default_height'],
-                    controller=controller_type
-                ) as pc:
-                    
-                    self.logger.info("🚀 Taking off...")
-                    time.sleep(2)
-                    
-                    if not self.emergency_triggered:
-                        hover_height = self.config['flight']['hover_height']
-                        self.logger.info(f"🔄 Hovering at {hover_height}m")
-                        pc.go_to(0.0, 0.0, hover_height)
+                # Use MotionCommander for basic flight
+                with MotionCommander(scf, default_height=self.config['flight']['default_height']) as mc:
+                    if logging_ok:
+                        with self.sync_logger:
+                            self.logger.info("🚀 Taking off with MotionCommander...")
+                            time.sleep(2)
+                            
+                            if not self.emergency_triggered:
+                                hover_duration = self.config['flight']['hover_duration']
+                                start_time = time.time()
+                                
+                                self.logger.info(f"🔄 Hovering for {hover_duration}s")
+                                while (time.time() - start_time < hover_duration 
+                                       and not self.emergency_triggered):
+                                    # Process log data for safety
+                                    for log_entry in self.sync_logger:
+                                        self.flight_data.append(log_entry[1])
+                                        self._log_battery_safety(log_entry[1])
+                                        time.sleep(0.1)
+                                        break
+                    else:
+                        self.logger.info("🚀 Taking off without logging...")
+                        time.sleep(2)
                         
-                        # Hover duration
-                        hover_duration = self.config['flight']['hover_duration']
-                        start_time = time.time()
-                        
-                        while (time.time() - start_time < hover_duration 
-                               and not self.emergency_triggered):
-                            time.sleep(0.1)
+                        if not self.emergency_triggered:
+                            hover_duration = self.config['flight']['hover_duration']
+                            time.sleep(hover_duration)
                     
-                    # Land
-                    self.logger.info("🛬 Landing...")
-                    velocity = (self.config['safety']['emergency_land_velocity'] 
-                              if self.emergency_triggered 
-                              else self.config['flight']['landing_velocity'])
-                    pc.land(velocity=velocity)
-                    time.sleep(2)
+                    self.logger.info("🛬 Landing with MotionCommander...")
+                    # MotionCommander handles landing automatically on exit
                 
                 if self.safety_timer:
                     self.safety_timer.cancel()
@@ -303,14 +292,20 @@ class CrazyflieController:
         
         try:
             with SyncCrazyflie(uri, cf=Crazyflie(rw_cache=cache_dir)) as scf:
-                self._connection_callbacks(scf)
-                self._setup_logging(scf.cf)
+                # Setup sync logging
+                logging_ok = self._setup_sync_logging(scf)
                 
-                # Reset and arm
+                # Set initial position to zero and reset estimator
+                scf.cf.param.set_value('kalman.initialX', '0')
+                scf.cf.param.set_value('kalman.initialY', '0') 
+                scf.cf.param.set_value('kalman.initialZ', '0')
+                time.sleep(0.1)
+                
+                # Reset Kalman filter to apply initial position
                 scf.cf.param.set_value('kalman.resetEstimation', '1')
                 time.sleep(0.1)
                 scf.cf.param.set_value('kalman.resetEstimation', '0')
-                time.sleep(2)
+                time.sleep(3)  # Extra time for estimator convergence
                 scf.cf.platform.send_arming_request(True)
                 time.sleep(1.0)
                 
@@ -321,54 +316,54 @@ class CrazyflieController:
                 )
                 self.safety_timer.start()
                 
-                controller_type = (PositionHlCommander.CONTROLLER_PID 
-                                 if self.config['flight']['controller'] == 'PID' 
-                                 else PositionHlCommander.CONTROLLER_MELLINGER)
-                
-                with PositionHlCommander(
-                    scf,
-                    x=0.0, y=0.0, z=0.0,
-                    default_velocity=self.config['flight']['default_velocity'],
-                    default_height=self.config['flight']['default_height'],
-                    controller=controller_type
-                ) as pc:
-                    
+                # Use MotionCommander for exploration
+                with MotionCommander(scf, default_height=self.config['flight']['default_height']) as mc:
                     with Multiranger(scf) as multiranger:
                         self.multiranger = multiranger
                         
-                        self.logger.info("🚀 Taking off...")
-                        time.sleep(3)  # Wait for sensor stabilization
-                        
-                        # Exploration phase
-                        moves_made = 0
-                        max_moves = 5
-                        obstacle_threshold = 0.8  # meters
-                        move_distance = 0.3  # meters
-                        
-                        while moves_made < max_moves and not self.emergency_triggered:
-                            # Print sensor status
-                            self._print_sensor_status()
+                        if logging_ok:
+                            with self.sync_logger:
+                                self.logger.info("🚀 Taking off for sensor exploration...")
+                                time.sleep(3)  # Wait for sensor stabilization
+                                
+                                # Exploration phase
+                                moves_made = 0
+                                max_moves = 5
+                                obstacle_threshold = 0.8  # meters
+                                move_distance = 0.5  # meters
+                                
+                                # Start continuous logging in background
+                                log_thread = threading.Thread(target=self._continuous_logging, daemon=True)
+                                log_thread.start()
+                                
+                                while moves_made < max_moves and not self.emergency_triggered:
+                                    self._print_sensor_status()
+                                    direction, distance = self._find_free_direction(obstacle_threshold)
+                                    
+                                    if direction:
+                                        self.logger.info(f"🎯 Moving {direction} ({distance:.2f}m free)")
+                                        self._move_with_motion_commander(mc, direction, move_distance)
+                                        moves_made += 1
+                                        time.sleep(2)
+                                    else:
+                                        self.logger.warning("⚠️ No free directions - staying in place")
+                                        time.sleep(1)
+                                        moves_made += 1
+                        else:
+                            self.logger.info("🚀 Taking off for sensor exploration without logging...")
+                            time.sleep(3)
                             
-                            # Find free direction
-                            direction, distance = self._find_free_direction(obstacle_threshold)
-                            
-                            if direction:
-                                self.logger.info(f"🎯 Moving {direction} ({distance:.2f}m free)")
-                                self._move_in_direction(pc, direction, move_distance)
-                                moves_made += 1
+                            # Basic exploration without logging
+                            moves_made = 0
+                            max_moves = 3
+                            while moves_made < max_moves and not self.emergency_triggered:
+                                self._print_sensor_status()
+                                mc.forward(0.3)
                                 time.sleep(2)
-                            else:
-                                self.logger.warning("⚠️ No free directions - staying in place")
-                                time.sleep(1)
                                 moves_made += 1
-                    
-                    # Land
-                    self.logger.info("🛬 Landing...")
-                    velocity = (self.config['safety']['emergency_land_velocity'] 
-                              if self.emergency_triggered 
-                              else self.config['flight']['landing_velocity'])
-                    pc.land(velocity=velocity)
-                    time.sleep(2)
+                        
+                        self.logger.info("🛬 Landing...")
+                        # MotionCommander handles landing automatically on exit
                 
                 if self.safety_timer:
                     self.safety_timer.cancel()
@@ -422,18 +417,28 @@ class CrazyflieController:
         
         return best_direction, max_distance
     
-    def _move_in_direction(self, pc, direction, distance):
-        """Move in specified direction"""
+    def _continuous_logging(self):
+        """Continuous logging thread for SyncLogger"""
+        try:
+            for log_entry in self.sync_logger:
+                if self.emergency_triggered:
+                    break
+                self.flight_data.append(log_entry[1])
+                self._log_battery_safety(log_entry[1])
+        except Exception as e:
+            self.logger.warning(f"Logging thread error: {e}")
+    
+    def _move_with_motion_commander(self, mc, direction, distance):
+        """Move in specified direction using MotionCommander"""
         movements = {
-            'front': lambda: pc.forward(distance),
-            'back': lambda: pc.back(distance),
-            'left': lambda: pc.left(distance),
-            'right': lambda: pc.right(distance)
+            'front': lambda: mc.forward(distance),
+            'back': lambda: mc.back(distance),
+            'left': lambda: mc.left(distance),
+            'right': lambda: mc.right(distance)
         }
         
         if direction in movements:
             movements[direction]()
-            time.sleep(1)
             return True
         return False
 
@@ -456,7 +461,4 @@ def run_sensor_exploration():
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "sensor":
-        run_sensor_exploration()
-    else:
-        run_basic_flight()
+    run_sensor_exploration()

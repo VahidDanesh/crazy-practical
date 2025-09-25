@@ -9,7 +9,7 @@ flight:
   default_velocity: 0.3  # m/s
   landing_velocity: 0.2  # m/s
   hover_duration: 5.0    # seconds
-  controller: "PID"      # PID or MELLINGER
+  controller: "MELLINGER"      # PID or MELLINGER
 
 safety:
   max_flight_time: 30.0  # seconds - auto-land after this time
@@ -18,7 +18,7 @@ safety:
   emergency_land_velocity: 0.5  # m/s - fast emergency landing
 
 logging:
-  period_ms: 100  # milliseconds
+  period_ms: 10  # milliseconds
   log_file: "./logs/flight_log.csv"
   variables:
     - "stateEstimate.x"
