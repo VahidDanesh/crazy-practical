@@ -30,7 +30,7 @@ def run_basic_flight(config_path: Optional[str] = None, enable_plot: bool = True
     try:
         controller = CrazyflieController(config_path, enable_plotting=enable_plot)
         mission = BasicFlightMission(controller)
-        mission.execute()
+        mission.run()
         return 0
     except KeyboardInterrupt:
         logging.info("Flight interrupted by user")
@@ -45,7 +45,7 @@ def run_sensor_exploration(config_path: Optional[str] = None, enable_plot: bool 
     try:
         controller = CrazyflieController(config_path, enable_plotting=enable_plot)
         mission = SensorExplorationMission(controller)
-        mission.execute()
+        mission.run()
         return 0
     except KeyboardInterrupt:
         logging.info("Flight interrupted by user")

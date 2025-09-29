@@ -15,7 +15,7 @@ from cflib.positioning.position_hl_commander import PositionHlCommander
 from cflib.positioning.motion_commander import MotionCommander
 from cflib.utils.multiranger import Multiranger
 
-from .controller import CrazyflieController
+from cfpilot.controller import CrazyflieController
 
 
 class BaseMission:
@@ -23,11 +23,19 @@ class BaseMission:
     
     def __init__(self, controller: CrazyflieController):
         self.controller = controller
+        self.config = self.controller.config
         self.logger = self.controller.logger
-    
-    def run(self, uri: str) -> None:
+
+
+    def run(self, uri: Optional[str] = None) -> None:
         """Run the mission"""
         cflib.crtp.init_drivers()
+
+        if not uri:
+            uri = self.config['connection']['uri']
+            if not uri:
+                self.logger.error("No Crazyflie found, set in connection URI or provide as input - cannot run mission")
+                return
         
         try:
             self.controller.connect(uri)
@@ -54,10 +62,10 @@ class BasicFlightMission(BaseMission):
         
         pc = PositionHlCommander(self.controller.cf, 
                                default_velocity=self.controller.config['flight']['default_velocity'],
-                               default_height=self.controller.config['flight']['takeoff_height'])
+                               default_height=self.controller.config['flight']['default_height'])
         
         self.logger.info("Taking off...")
-        pc.take_off(height=self.controller.config['flight']['takeoff_height'])
+        pc.take_off(height=self.controller.config['flight']['default_height'])
         time.sleep(2)
         
         # Hover for 5 seconds
@@ -94,20 +102,21 @@ class SensorExplorationMission(BaseMission):
         self.controller.add_data_callback(sensor_callback)
         
         self.logger.info("Taking off...")
-        pc.take_off(height=self.controller.config['flight']['takeoff_height'])
+        height = self.controller.config['flight']['default_height']
+        pc.take_off(height=height)
         time.sleep(2)
         
         # Movement pattern
         positions = [
-            (0.5, 0, 0.5),
-            (0.5, 0.5, 0.5),
-            (0, 0.5, 0.5),
-            (-0.5, 0.5, 0.5),
-            (-0.5, 0, 0.5),
-            (-0.5, -0.5, 0.5),
-            (0, -0.5, 0.5),
-            (0.5, -0.5, 0.5),
-            (0, 0, 0.5)
+            (0.5, 0, height),
+            (0.5, 0.5, height),
+            (0, 0.5, height),
+            (-0.5, 0.5, height),
+            (-0.5, 0, height),
+            (-0.5, -0.5, height),
+            (0, -0.5, height),
+            (0.5, -0.5, height),
+            (0, 0, height)
         ]
         
         for i, (x, y, z) in enumerate(positions):
@@ -116,7 +125,7 @@ class SensorExplorationMission(BaseMission):
                 
             self.logger.info(f"Moving to position {i + 1}: ({x}, {y}, {z})")
             pc.go_to(x, y, z)
-            time.sleep(3)
+            time.sleep(2)
         
         self.logger.info("Landing...")
         pc.land()
