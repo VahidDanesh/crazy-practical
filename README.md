@@ -139,10 +139,5 @@ crazy-practical/
 └── README.md                        # This file
 ```
 
-## Package Architecture
-
-- **`controller.py`**: Core CrazyflieController class with clean, modular design
-- **`detection.py`**: LandingPadDetector and SearchPattern classes for autonomous landing
-- **`missions.py`**: Modular mission classes (BasicFlightMission, SensorExplorationMission, etc.)
-- **`cli.py`**: Command-line interface for easy mission execution
-- **`tests/`**: Comprehensive test suite with unit tests for all components
+## References
+Grid Map implementation is obtained from [PythonRobotics](https://github.com/AtsushiSakai/PythonRobotics/blob/master/Mapping/grid_map_lib/grid_map_lib.py)
