@@ -11,4 +11,4 @@ pandas>=2.0.0
 
 # Optional for enhanced features
 matplotlib>=3.5.0  # For plotting and visualization
-
+seaborn>=0.12.0    # For advanced statistical data visualization
