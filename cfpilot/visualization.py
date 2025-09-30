@@ -8,7 +8,7 @@ import math
 import logging
 import threading
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -24,7 +24,12 @@ try:
     from PyQt5 import QtCore, QtWidgets
     VISUALIZATION_AVAILABLE = True
 except ImportError:
-    VISUALIZATION_AVAILABLE = False
+    try:
+        # Fallback for systems without PyQt5
+        import matplotlib.pyplot as plt
+        VISUALIZATION_AVAILABLE = True
+    except ImportError:
+        VISUALIZATION_AVAILABLE = False
 
 
 class PointCloudPlotter:
@@ -126,127 +131,132 @@ class PointCloudPlotter:
     
 
 
-class VisualizationWindow(QtWidgets.QMainWindow):
-    """Qt window for 3D visualization"""
-    
-    def __init__(self, sensor_threshold: int):
-        super().__init__()
-        self.resize(700, 500)
-        self.setWindowTitle('CFPilot - Multiranger Point Cloud')
-        
-        self.canvas = VisualizationCanvas(sensor_threshold)
-        self.canvas.create_native()
-        self.canvas.native.setParent(self)
-        self.setCentralWidget(self.canvas.native)
+if VISUALIZATION_AVAILABLE:
+    try:
+        class VisualizationWindow(QtWidgets.QMainWindow):
+            """Qt window for 3D visualization"""
+            
+            def __init__(self, sensor_threshold: int):
+                super().__init__()
+                self.resize(700, 500)
+                self.setWindowTitle('CFPilot - Multiranger Point Cloud')
+                
+                self.canvas = VisualizationCanvas(sensor_threshold)
+                self.canvas.create_native()
+                self.canvas.native.setParent(self)
+                self.setCentralWidget(self.canvas.native)
+    except NameError:
+        # QtWidgets not available
+        pass
 
 
-class VisualizationCanvas(scene.SceneCanvas):
-    """3D visualization canvas"""
-    
-    def __init__(self, sensor_threshold: int):
-        super().__init__(keys=None)
-        self.unfreeze()
-        self.sensor_threshold = sensor_threshold
-        self.size = 800, 600
-        self.view = self.central_widget.add_view()
-        self.view.bgcolor = '#ffffff'
-        self.view.camera = TurntableCamera(fov=10.0, distance=30.0, up='+z', center=(0.0, 0.0, 0.0))
-        
-        # Data arrays
-        self.last_pos = [0, 0, 0]
-        self.pos_data = np.array([0, 0, 0], ndmin=2)
-        self.meas_data = np.array([0, 0, 0], ndmin=2)
-        
-        # Visual elements
-        self.pos_markers = visuals.Markers()
-        self.meas_markers = visuals.Markers()
-        self.lines = [visuals.Line() for _ in range(6)]
-        
-        # Add to scene
-        self.view.add(self.pos_markers)
-        self.view.add(self.meas_markers)
-        for line in self.lines:
-            self.view.add(line)
-        
-        scene.visuals.XYZAxis(parent=self.view.scene)
-        self.freeze()
-    
-    def set_position(self, pos: List[float]) -> None:
-        """Set drone position"""
-        self.last_pos = pos
-        self.pos_data = np.append(self.pos_data, [pos], axis=0)
-        self.pos_markers.set_data(self.pos_data, face_color='red', size=5)
-    
-    def set_measurement(self, measurements: Dict[str, float]) -> None:
-        """Set sensor measurements"""
-        data = self._create_sensor_points(measurements)
-        
-        # Update lines
-        for i, line in enumerate(self.lines):
-            if i < len(data):
-                line.set_data(np.array([self.last_pos, data[i]]))
-            else:
-                line.set_data(np.array([self.last_pos, self.last_pos]))
-        
-        # Update measurement points
-        if data:
-            self.meas_data = np.append(self.meas_data, data, axis=0)
-        self.meas_markers.set_data(self.meas_data, face_color='blue', size=5)
-    
-    def _create_sensor_points(self, m: Dict[str, float]) -> List[List[float]]:
-        """Create 3D points from sensor measurements"""
-        data = []
-        o = self.last_pos
-        roll, pitch, yaw = m.get('roll', 0), -m.get('pitch', 0), m.get('yaw', 0)
-        
-        # Check each sensor direction
-        sensors = [
-            ('up', [o[0], o[1], o[2] + m.get('up', 8000) / 1000.0]),
-            ('down', [o[0], o[1], o[2] - m.get('down', 8000) / 1000.0]),
-            ('left', [o[0], o[1] + m.get('left', 8000) / 1000.0, o[2]]),
-            ('right', [o[0], o[1] - m.get('right', 8000) / 1000.0, o[2]]),
-            ('front', [o[0] + m.get('front', 8000) / 1000.0, o[1], o[2]]),
-            ('back', [o[0] - m.get('back', 8000) / 1000.0, o[1], o[2]])
-        ]
-        
-        for direction, point in sensors:
-            distance = m.get(direction, 8000)
-            if distance < self.sensor_threshold:
-                rotated_point = self._rotate_point(roll, pitch, yaw, o, point)
-                data.append(rotated_point)
-        
-        return data
-    
-    def _rotate_point(self, roll: float, pitch: float, yaw: float, 
-                     origin: List[float], point: List[float]) -> List[float]:
-        """Rotate point around origin"""
-        # Convert to radians
-        r, p, y = map(math.radians, [roll, pitch, yaw])
-        
-        # Rotation matrices
-        cos_r, sin_r = math.cos(r), math.sin(r)
-        cos_p, sin_p = math.cos(p), math.sin(p)
-        cos_y, sin_y = math.cos(y), math.sin(y)
-        
-        rot_y = np.array([[cos_y, -sin_y, 0], [sin_y, cos_y, 0], [0, 0, 1]])
-        rot_p = np.array([[cos_p, 0, sin_p], [0, 1, 0], [-sin_p, 0, cos_p]])
-        rot_r = np.array([[1, 0, 0], [0, cos_r, -sin_r], [0, sin_r, cos_r]])
-        
-        # Combined rotation
-        rot_matrix = np.dot(np.dot(rot_r, rot_p), rot_y)
-        
-        # Apply rotation
-        point_relative = np.subtract(point, origin)
-        rotated_relative = np.dot(rot_matrix, point_relative)
-        return np.add(rotated_relative, origin).tolist()
-
-
-#!/usr/bin/env python3
-"""
-Flight Data Visualization Tool
-Plots flight data from Crazyflie landing pad detection missions
-"""
-
+# class VisualizationCanvas(scene.SceneCanvas):
+#     """3D visualization canvas"""
+#     
+#     def __init__(self, sensor_threshold: int):
+#         super().__init__(keys=None)
+#         self.unfreeze()
+#         self.sensor_threshold = sensor_threshold
+#         self.size = 800, 600
+#         self.view = self.central_widget.add_view()
+#         self.view.bgcolor = '#ffffff'
+#         self.view.camera = TurntableCamera(fov=10.0, distance=30.0, up='+z', center=(0.0, 0.0, 0.0))
+#         
+#         # Data arrays
+#         self.last_pos = [0, 0, 0]
+#         self.pos_data = np.array([0, 0, 0], ndmin=2)
+#         self.meas_data = np.array([0, 0, 0], ndmin=2)
+#         
+#         # Visual elements
+#         self.pos_markers = visuals.Markers()
+#         self.meas_markers = visuals.Markers()
+#         self.lines = [visuals.Line() for _ in range(6)]
+#         
+#         # Add to scene
+#         self.view.add(self.pos_markers)
+#         self.view.add(self.meas_markers)
+#         for line in self.lines:
+#             self.view.add(line)
+#         
+#         scene.visuals.XYZAxis(parent=self.view.scene)
+#         self.freeze()
+#     
+#     def set_position(self, pos: List[float]) -> None:
+#         """Set drone position"""
+#         self.last_pos = pos
+#         self.pos_data = np.append(self.pos_data, [pos], axis=0)
+#         self.pos_markers.set_data(self.pos_data, face_color='red', size=5)
+#     
+#     def set_measurement(self, measurements: Dict[str, float]) -> None:
+#         """Set sensor measurements"""
+#         data = self._create_sensor_points(measurements)
+#         
+#         # Update lines
+#         for i, line in enumerate(self.lines):
+#             if i < len(data):
+#                 line.set_data(np.array([self.last_pos, data[i]]))
+#             else:
+#                 line.set_data(np.array([self.last_pos, self.last_pos]))
+#         
+#         # Update measurement points
+#         if data:
+#             self.meas_data = np.append(self.meas_data, data, axis=0)
+#         self.meas_markers.set_data(self.meas_data, face_color='blue', size=5)
+#     
+#     def _create_sensor_points(self, m: Dict[str, float]) -> List[List[float]]:
+#         """Create 3D points from sensor measurements"""
+#         data = []
+#         o = self.last_pos
+#         roll, pitch, yaw = m.get('roll', 0), -m.get('pitch', 0), m.get('yaw', 0)
+#         
+#         # Check each sensor direction
+#         sensors = [
+#             ('up', [o[0], o[1], o[2] + m.get('up', 8000) / 1000.0]),
+#             ('down', [o[0], o[1], o[2] - m.get('down', 8000) / 1000.0]),
+#             ('left', [o[0], o[1] + m.get('left', 8000) / 1000.0, o[2]]),
+#             ('right', [o[0], o[1] - m.get('right', 8000) / 1000.0, o[2]]),
+#             ('front', [o[0] + m.get('front', 8000) / 1000.0, o[1], o[2]]),
+#             ('back', [o[0] - m.get('back', 8000) / 1000.0, o[1], o[2]])
+#         ]
+#         
+#         for direction, point in sensors:
+#             distance = m.get(direction, 8000)
+#             if distance < self.sensor_threshold:
+#                 rotated_point = self._rotate_point(roll, pitch, yaw, o, point)
+#                 data.append(rotated_point)
+#         
+#         return data
+#     
+#     def _rotate_point(self, roll: float, pitch: float, yaw: float, 
+#                      origin: List[float], point: List[float]) -> List[float]:
+#         """Rotate point around origin"""
+#         # Convert to radians
+#         r, p, y = map(math.radians, [roll, pitch, yaw])
+#         
+#         # Rotation matrices
+#         cos_r, sin_r = math.cos(r), math.sin(r)
+#         cos_p, sin_p = math.cos(p), math.sin(p)
+#         cos_y, sin_y = math.cos(y), math.sin(y)
+#         
+#         rot_y = np.array([[cos_y, -sin_y, 0], [sin_y, cos_y, 0], [0, 0, 1]])
+#         rot_p = np.array([[cos_p, 0, sin_p], [0, 1, 0], [-sin_p, 0, cos_p]])
+#         rot_r = np.array([[1, 0, 0], [0, cos_r, -sin_r], [0, sin_r, cos_r]])
+#         
+#         # Combined rotation
+#         rot_matrix = np.dot(np.dot(rot_r, rot_p), rot_y)
+#         
+#         # Apply rotation
+#         point_relative = np.subtract(point, origin)
+#         rotated_relative = np.dot(rot_matrix, point_relative)
+#         return np.add(rotated_relative, origin).tolist()
+# 
+# 
+# #!/usr/bin/env python3
+# """
+# Flight Data Visualization Tool
+# Plots flight data from Crazyflie landing pad detection missions
+# """
+# 
 class FlightDataPlotter:
     """Visualize flight data and landing pad detection results"""
     
@@ -501,4 +511,115 @@ class FlightDataPlotter:
             print(f"\n📄 Report saved to {save_path}")
         
         return report
+
+
+class GridMapVisualizer:
+    """Simple visualization for grid map data using matplotlib"""
+    
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+        if not VISUALIZATION_AVAILABLE:
+            self.logger.warning("Matplotlib not available - grid visualization disabled")
+            return
+        
+        try:
+            import matplotlib.pyplot as plt
+            self.plt = plt
+            self.fig = None
+            self.available = True
+        except ImportError:
+            self.available = False
+            self.logger.warning("Matplotlib not available for grid visualization")
+    
+    def plot_grid_map(self, grid_data: Dict[str, Any], save_path: Optional[str] = None) -> None:
+        """
+        Plot grid map data showing occupancy, height, and confidence.
+        
+        Args:
+            grid_data: Grid data from LandingPadDetector.export_grid_data()
+            save_path: Optional path to save the plot
+        """
+        if not self.available:
+            return
+        
+        try:
+            import matplotlib.pyplot as plt
+            import numpy as np
+            
+            # Extract data
+            occupancy = np.array(grid_data['occupancy_grid'])
+            height = np.array(grid_data['height_grid'])
+            confidence = np.array(grid_data['confidence_grid'])
+            bounds = grid_data['bounds']
+            resolution = grid_data['resolution']
+            
+            # Replace -1 (NaN) with 0 for visualization
+            height[height == -1] = 0
+            
+            # Create figure with subplots
+            fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+            fig.suptitle('Grid Map Visualization', fontsize=16)
+            
+            # Occupancy grid
+            im1 = axes[0, 0].imshow(occupancy, cmap='tab10', origin='lower', 
+                                   extent=bounds, aspect='equal')
+            axes[0, 0].set_title('Occupancy Grid')
+            axes[0, 0].set_xlabel('X (m)')
+            axes[0, 0].set_ylabel('Y (m)')
+            plt.colorbar(im1, ax=axes[0, 0], label='Cell State')
+            
+            # Height map
+            im2 = axes[0, 1].imshow(height, cmap='terrain', origin='lower',
+                                   extent=bounds, aspect='equal')
+            axes[0, 1].set_title('Height Map')
+            axes[0, 1].set_xlabel('X (m)')
+            axes[0, 1].set_ylabel('Y (m)')
+            plt.colorbar(im2, ax=axes[0, 1], label='Height (m)')
+            
+            # Confidence map
+            im3 = axes[1, 0].imshow(confidence, cmap='Blues', origin='lower',
+                                   extent=bounds, aspect='equal')
+            axes[1, 0].set_title('Confidence Map')
+            axes[1, 0].set_xlabel('X (m)')
+            axes[1, 0].set_ylabel('Y (m)')
+            plt.colorbar(im3, ax=axes[1, 0], label='Confidence')
+            
+            # Exploration progress (text summary)
+            axes[1, 1].axis('off')
+            progress = grid_data['exploration_progress']
+            stats_text = f"""
+            Grid Map Statistics:
+            
+            Total Cells: {progress['total_cells']}
+            Explored Cells: {progress['explored_cells']}
+            Exploration: {progress['exploration_percentage']:.1f}%
+            
+            Resolution: {resolution:.2f} m
+            Bounds: {bounds}
+            """
+            axes[1, 1].text(0.1, 0.5, stats_text, fontsize=12, 
+                           verticalalignment='center', fontfamily='monospace')
+            
+            plt.tight_layout()
+            
+            if save_path:
+                plt.savefig(save_path, dpi=150, bbox_inches='tight')
+                self.logger.info(f"Grid map plot saved to {save_path}")
+            else:
+                plt.show()
+            
+            self.fig = fig
+            
+        except Exception as e:
+            self.logger.error(f"Failed to plot grid map: {e}")
+    
+    def save_grid_data(self, grid_data: Dict[str, Any], filepath: str) -> None:
+        """Save grid data to JSON file"""
+        try:
+            import json
+            with open(filepath, 'w') as f:
+                json.dump(grid_data, f, indent=2)
+            self.logger.info(f"Grid data saved to {filepath}")
+        except Exception as e:
+            self.logger.error(f"Failed to save grid data: {e}")
 

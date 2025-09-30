@@ -98,6 +98,19 @@ class SensorExplorationMission(BaseMission):
             if 'range.front' in data:
                 self.logger.info(f"Sensors - F:{data.get('range.front')} B:{data.get('range.back')} "
                                f"L:{data.get('range.left')} R:{data.get('range.right')}")
+                
+                # Update grid map with sensor data if available
+                if hasattr(self.controller, 'landing_detector') and hasattr(data, 'get'):
+                    # Get current position estimate (simplified)
+                    # In a real implementation, this would come from position logging
+                    current_pos = getattr(self.controller, 'current_position', (0.0, 0.0))
+                    down_distance = data.get('range.down', None)
+                    
+                    if down_distance and down_distance < 2000:  # Valid measurement
+                        height = down_distance / 1000.0  # Convert mm to meters
+                        grid_map = self.controller.landing_detector.get_grid_map()
+                        from cfpilot.detection import CellState
+                        grid_map.update_cell(current_pos[0], current_pos[1], height, CellState.FREE)
         
         self.controller.add_data_callback(sensor_callback)
         
@@ -124,6 +137,10 @@ class SensorExplorationMission(BaseMission):
                 break
                 
             self.logger.info(f"Moving to position {i + 1}: ({x}, {y}, {z})")
+            
+            # Update current position for grid mapping
+            self.controller.current_position = (x, y)
+            
             pc.go_to(x, y, z)
             time.sleep(2)
         
@@ -163,23 +180,45 @@ class LandingPadDetectionMission(BaseMission):
         pc.take_off(height=self.controller.config['flight']['takeoff_height'])
         time.sleep(2)
         
-        # Search pattern
-        search_positions = [
-            (0.5, 0.5, 1.0),
-            (-0.5, 0.5, 1.0),
-            (-0.5, -0.5, 1.0),
-            (0.5, -0.5, 1.0),
-            (1.0, 0, 1.0),
-            (0, 1.0, 1.0),
-            (-1.0, 0, 1.0),
-            (0, -1.0, 1.0)
-        ]
+        # Start landing pad detection
+        if hasattr(self.controller, 'landing_detector'):
+            self.controller.landing_detector.start_detection()
+        
+        # Search pattern - use adaptive search based on grid map
+        if hasattr(self.controller, 'search_pattern'):
+            # Use adaptive search pattern based on grid map data
+            search_waypoints = self.controller.search_pattern.generate_adaptive_pattern(
+                center=(0.0, 0.0), 
+                max_distance=1.5,
+                prioritize_unexplored=True
+            )
+            
+            # Convert to positions with height
+            search_positions = [(x, y, 1.0) for x, y, _ in search_waypoints[:10]]  # Limit to 10 positions
+            
+            self.logger.info(f"Using adaptive search pattern with {len(search_positions)} positions")
+        else:
+            # Fallback to static pattern
+            search_positions = [
+                (0.5, 0.5, 1.0),
+                (-0.5, 0.5, 1.0),
+                (-0.5, -0.5, 1.0),
+                (0.5, -0.5, 1.0),
+                (1.0, 0, 1.0),
+                (0, 1.0, 1.0),
+                (-1.0, 0, 1.0),
+                (0, -1.0, 1.0)
+            ]
         
         for i, (x, y, z) in enumerate(search_positions):
             if self.controller.emergency_triggered:
                 break
                 
             self.logger.info(f"Searching position {i + 1}: ({x}, {y}, {z})")
+            
+            # Update current position for grid mapping
+            self.controller.current_position = (x, y)
+            
             pc.go_to(x, y, z)
             time.sleep(4)
             

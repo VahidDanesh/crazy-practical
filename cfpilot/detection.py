@@ -474,6 +474,21 @@ class LandingPadDetector:
     def get_unexplored_areas(self) -> List[Tuple[float, float]]:
         """Get unexplored areas for search planning"""
         return self.grid_map.find_unexplored_cells()
+    
+    def export_grid_data(self) -> Dict[str, Any]:
+        """Export grid map data for visualization or analysis"""
+        return {
+            'bounds': (self.grid_map.min_x, self.grid_map.max_x, 
+                      self.grid_map.min_y, self.grid_map.max_y),
+            'resolution': self.grid_map.resolution,
+            'dimensions': (self.grid_map.width, self.grid_map.height),
+            'occupancy_grid': self.grid_map.occupancy_grid.tolist(),
+            'height_grid': np.where(np.isnan(self.grid_map.height_grid), 
+                                   -1, self.grid_map.height_grid).tolist(),
+            'confidence_grid': self.grid_map.confidence_grid.tolist(),
+            'visit_count': self.grid_map.visit_count.tolist(),
+            'exploration_progress': self.grid_map.get_exploration_progress()
+        }
 
 
 class SearchPattern:
