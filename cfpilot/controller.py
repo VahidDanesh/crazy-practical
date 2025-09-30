@@ -53,7 +53,7 @@ class CrazyflieController:
         
         # Landing pad detection
         self.landing_detector = LandingPadDetector()
-        self.search_pattern = SearchPattern()
+        self.search_pattern = SearchPattern(self.landing_detector.get_grid_map())
         
         # Plotting
         self.enable_plotting = enable_plotting

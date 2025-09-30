@@ -6,13 +6,14 @@ Tests for the landing pad detection algorithms.
 
 import unittest
 import numpy as np
+import math
 import sys
 from pathlib import Path
 
 # Add the parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from cfpilot.detection import LandingPadDetector, SearchPattern
+from cfpilot.detection import LandingPadDetector, SearchPattern, GridMap, CellState
 
 
 class TestLandingPadDetector(unittest.TestCase):
@@ -194,6 +195,151 @@ class TestSearchPattern(unittest.TestCase):
             self.assertIsInstance(x, float)
             self.assertIsInstance(y, float)
             self.assertIsInstance(direction, str)
+
+
+class TestGridMap(unittest.TestCase):
+    """Test cases for grid map functionality"""
+    
+    def setUp(self):
+        """Set up test fixtures"""
+        # Create a 2x2 meter grid with 0.1m resolution
+        self.grid_map = GridMap((-1.0, 1.0, -1.0, 1.0), resolution=0.1)
+    
+    def test_grid_initialization(self):
+        """Test grid map initialization"""
+        self.assertEqual(self.grid_map.width, 21)  # (-1.0 to 1.0) / 0.1 + 1
+        self.assertEqual(self.grid_map.height, 21)
+        self.assertEqual(self.grid_map.resolution, 0.1)
+    
+    def test_world_to_grid_conversion(self):
+        """Test coordinate conversion"""
+        # Test center point
+        row, col = self.grid_map.world_to_grid(0.0, 0.0)
+        self.assertEqual(row, 10)  # Middle of 21x21 grid
+        self.assertEqual(col, 10)
+        
+        # Test corners
+        row, col = self.grid_map.world_to_grid(-1.0, -1.0)
+        self.assertEqual(row, 0)
+        self.assertEqual(col, 0)
+        
+        row, col = self.grid_map.world_to_grid(1.0, 1.0)
+        self.assertEqual(row, 20)
+        self.assertEqual(col, 20)
+    
+    def test_grid_to_world_conversion(self):
+        """Test reverse coordinate conversion"""
+        # Test center cell
+        x, y = self.grid_map.grid_to_world(10, 10)
+        self.assertAlmostEqual(x, 0.0, places=2)
+        self.assertAlmostEqual(y, 0.0, places=2)
+    
+    def test_cell_updates(self):
+        """Test updating cells with measurements"""
+        # Update a cell
+        self.grid_map.update_cell(0.0, 0.0, 0.5, CellState.FREE)
+        
+        # Check the cell info
+        info = self.grid_map.get_cell_info(0.0, 0.0)
+        self.assertEqual(info['state'], CellState.FREE)
+        self.assertAlmostEqual(info['height'], 0.5, places=2)
+        self.assertEqual(info['visit_count'], 1)
+        self.assertGreater(info['confidence'], 0)
+    
+    def test_multiple_measurements(self):
+        """Test multiple measurements at same location"""
+        # Add multiple measurements
+        self.grid_map.update_cell(0.0, 0.0, 0.5, CellState.FREE)
+        self.grid_map.update_cell(0.0, 0.0, 0.7, CellState.FREE)
+        
+        info = self.grid_map.get_cell_info(0.0, 0.0)
+        # Height should be averaged
+        self.assertNotEqual(info['height'], 0.5)  # Should be between 0.5 and 0.7
+        self.assertNotEqual(info['height'], 0.7)
+        self.assertEqual(info['visit_count'], 2)
+    
+    def test_find_unexplored_cells(self):
+        """Test finding unexplored areas"""
+        # Initially all cells should be unexplored
+        unexplored = self.grid_map.find_unexplored_cells()
+        self.assertEqual(len(unexplored), 21 * 21)  # All cells
+        
+        # Update one cell
+        self.grid_map.update_cell(0.0, 0.0, 0.5, CellState.FREE)
+        
+        # Should have one less unexplored cell
+        unexplored = self.grid_map.find_unexplored_cells()
+        self.assertEqual(len(unexplored), 21 * 21 - 1)
+    
+    def test_find_elevated_regions(self):
+        """Test finding elevated regions"""
+        # Add some measurements at ground level
+        for i in range(5):
+            x = i * 0.1 - 0.2
+            self.grid_map.update_cell(x, 0.0, 0.3, CellState.FREE)
+        
+        # Add an elevated measurement
+        self.grid_map.update_cell(0.5, 0.0, 0.5, CellState.ELEVATED)
+        
+        elevated = self.grid_map.find_elevated_regions()
+        self.assertGreater(len(elevated), 0)
+        
+        # Check that elevated region is detected
+        found_elevated = False
+        for region in elevated:
+            if abs(region['position'][0] - 0.5) < 0.05:
+                found_elevated = True
+                break
+        self.assertTrue(found_elevated)
+    
+    def test_exploration_progress(self):
+        """Test exploration progress tracking"""
+        # Initially no exploration
+        progress = self.grid_map.get_exploration_progress()
+        self.assertEqual(progress['explored_cells'], 0)
+        self.assertEqual(progress['exploration_percentage'], 0.0)
+        
+        # Explore some cells
+        for i in range(10):
+            self.grid_map.update_cell(i * 0.1, 0.0, 0.5, CellState.FREE)
+        
+        progress = self.grid_map.get_exploration_progress()
+        self.assertEqual(progress['explored_cells'], 10)
+        self.assertGreater(progress['exploration_percentage'], 0)
+        
+        
+class TestSearchPatternWithGridMap(unittest.TestCase):
+    """Test search pattern with grid map integration"""
+    
+    def setUp(self):
+        """Set up test fixtures"""
+        self.grid_map = GridMap((-2.0, 2.0, -2.0, 2.0), resolution=0.2)
+        self.search_pattern = SearchPattern(self.grid_map)
+    
+    def test_adaptive_pattern_with_unexplored(self):
+        """Test adaptive pattern generation with unexplored areas"""
+        center = (0.0, 0.0)
+        
+        # Generate adaptive pattern
+        waypoints = self.search_pattern.generate_adaptive_pattern(center, max_distance=1.0)
+        
+        # Should generate waypoints
+        self.assertGreater(len(waypoints), 0)
+        
+        # All waypoints should be within max distance
+        for x, y, direction in waypoints:
+            distance = math.sqrt(x**2 + y**2)  # Distance from center (0,0)
+            self.assertLessEqual(distance, 1.0)
+    
+    def test_adaptive_pattern_fallback(self):
+        """Test adaptive pattern fallback when no grid map"""
+        search_pattern = SearchPattern()  # No grid map
+        center = (0.0, 0.0)
+        
+        waypoints = search_pattern.generate_adaptive_pattern(center)
+        
+        # Should still generate waypoints (fallback to grid pattern)
+        self.assertGreater(len(waypoints), 0)
 
 
 if __name__ == '__main__':

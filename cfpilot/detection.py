@@ -9,12 +9,238 @@ import numpy as np
 import logging
 from collections import deque
 from typing import List, Tuple, Optional, Dict, Any
+from enum import Enum
+
+
+class CellState(Enum):
+    """States for grid map cells"""
+    UNKNOWN = 0
+    FREE = 1
+    OCCUPIED = 2
+    ELEVATED = 3  # Landing pad or platform
+
+
+class GridMap:
+    """
+    Grid-based environment discretization for spatial mapping and navigation.
+    
+    Discretizes the environment into a 2D grid of cells, each storing information
+    about occupancy, height, and exploration status.
+    """
+    
+    def __init__(self, bounds: Tuple[float, float, float, float], 
+                 resolution: float = 0.1):
+        """
+        Initialize the grid map.
+        
+        Args:
+            bounds: (min_x, max_x, min_y, max_y) boundaries of the environment
+            resolution: Size of each grid cell in meters
+        """
+        self.logger = logging.getLogger(__name__)
+        
+        self.min_x, self.max_x, self.min_y, self.max_y = bounds
+        self.resolution = resolution
+        
+        # Calculate grid dimensions
+        self.width = int((self.max_x - self.min_x) / resolution) + 1
+        self.height = int((self.max_y - self.min_y) / resolution) + 1
+        
+        # Initialize grid data structures
+        self.occupancy_grid = np.full((self.height, self.width), CellState.UNKNOWN.value, dtype=int)
+        self.height_grid = np.full((self.height, self.width), np.nan, dtype=float)
+        self.confidence_grid = np.zeros((self.height, self.width), dtype=float)
+        self.visit_count = np.zeros((self.height, self.width), dtype=int)
+        
+        self.logger.info(f"GridMap initialized: {self.width}x{self.height} cells, "
+                        f"resolution={resolution}m, bounds={bounds}")
+    
+    def world_to_grid(self, x: float, y: float) -> Tuple[int, int]:
+        """
+        Convert world coordinates to grid indices.
+        
+        Args:
+            x, y: World coordinates in meters
+            
+        Returns:
+            (row, col) grid indices
+        """
+        col = int((x - self.min_x) / self.resolution)
+        row = int((y - self.min_y) / self.resolution)
+        
+        # Clamp to grid boundaries
+        col = max(0, min(col, self.width - 1))
+        row = max(0, min(row, self.height - 1))
+        
+        return row, col
+    
+    def grid_to_world(self, row: int, col: int) -> Tuple[float, float]:
+        """
+        Convert grid indices to world coordinates (cell center).
+        
+        Args:
+            row, col: Grid indices
+            
+        Returns:
+            (x, y) world coordinates in meters
+        """
+        x = self.min_x + (col + 0.5) * self.resolution
+        y = self.min_y + (row + 0.5) * self.resolution
+        return x, y
+    
+    def update_cell(self, x: float, y: float, height: float, 
+                   state: CellState = CellState.FREE) -> None:
+        """
+        Update a grid cell with new measurements.
+        
+        Args:
+            x, y: World coordinates
+            height: Measured height at this location
+            state: Cell occupancy state
+        """
+        row, col = self.world_to_grid(x, y)
+        
+        # Update visit count
+        self.visit_count[row, col] += 1
+        
+        # Update height with running average
+        if np.isnan(self.height_grid[row, col]):
+            self.height_grid[row, col] = height
+        else:
+            # Running average with more weight to recent measurements
+            alpha = 0.3
+            self.height_grid[row, col] = (1 - alpha) * self.height_grid[row, col] + alpha * height
+        
+        # Update occupancy state
+        self.occupancy_grid[row, col] = state.value
+        
+        # Update confidence based on visit count
+        self.confidence_grid[row, col] = min(1.0, self.visit_count[row, col] / 5.0)
+    
+    def get_cell_info(self, x: float, y: float) -> Dict[str, Any]:
+        """
+        Get information about a cell at world coordinates.
+        
+        Args:
+            x, y: World coordinates
+            
+        Returns:
+            Dictionary with cell information
+        """
+        row, col = self.world_to_grid(x, y)
+        
+        return {
+            'position': (x, y),
+            'grid_indices': (row, col),
+            'state': CellState(self.occupancy_grid[row, col]),
+            'height': self.height_grid[row, col],
+            'confidence': self.confidence_grid[row, col],
+            'visit_count': self.visit_count[row, col]
+        }
+    
+    def find_free_cells(self, min_confidence: float = 0.5) -> List[Tuple[float, float]]:
+        """
+        Find all free cells with sufficient confidence.
+        
+        Args:
+            min_confidence: Minimum confidence threshold
+            
+        Returns:
+            List of (x, y) world coordinates of free cells
+        """
+        free_cells = []
+        
+        for row in range(self.height):
+            for col in range(self.width):
+                if (self.occupancy_grid[row, col] == CellState.FREE.value and
+                    self.confidence_grid[row, col] >= min_confidence):
+                    x, y = self.grid_to_world(row, col)
+                    free_cells.append((x, y))
+        
+        return free_cells
+    
+    def find_unexplored_cells(self) -> List[Tuple[float, float]]:
+        """
+        Find cells that haven't been explored yet.
+        
+        Returns:
+            List of (x, y) world coordinates of unexplored cells
+        """
+        unexplored = []
+        
+        for row in range(self.height):
+            for col in range(self.width):
+                if self.occupancy_grid[row, col] == CellState.UNKNOWN.value:
+                    x, y = self.grid_to_world(row, col)
+                    unexplored.append((x, y))
+        
+        return unexplored
+    
+    def find_elevated_regions(self, height_threshold: float = 0.05) -> List[Dict[str, Any]]:
+        """
+        Find regions with elevated surfaces (potential landing pads).
+        
+        Args:
+            height_threshold: Minimum height difference to consider elevated
+            
+        Returns:
+            List of elevated region information
+        """
+        elevated_regions = []
+        
+        # Calculate median height of known cells for baseline
+        known_heights = self.height_grid[~np.isnan(self.height_grid)]
+        if len(known_heights) < 3:
+            return elevated_regions
+        
+        baseline_height = np.median(known_heights)
+        
+        for row in range(self.height):
+            for col in range(self.width):
+                height = self.height_grid[row, col]
+                if (not np.isnan(height) and 
+                    height > baseline_height + height_threshold and
+                    self.confidence_grid[row, col] > 0.3):
+                    
+                    x, y = self.grid_to_world(row, col)
+                    elevated_regions.append({
+                        'position': (x, y),
+                        'height': height,
+                        'height_diff': height - baseline_height,
+                        'confidence': self.confidence_grid[row, col]
+                    })
+        
+        return elevated_regions
+    
+    def get_exploration_progress(self) -> Dict[str, Any]:
+        """
+        Get statistics about exploration progress.
+        
+        Returns:
+            Dictionary with exploration statistics
+        """
+        total_cells = self.width * self.height
+        explored_cells = np.sum(self.occupancy_grid != CellState.UNKNOWN.value)
+        free_cells = np.sum(self.occupancy_grid == CellState.FREE.value)
+        occupied_cells = np.sum(self.occupancy_grid == CellState.OCCUPIED.value)
+        elevated_cells = np.sum(self.occupancy_grid == CellState.ELEVATED.value)
+        
+        return {
+            'total_cells': total_cells,
+            'explored_cells': int(explored_cells),
+            'exploration_percentage': float(explored_cells / total_cells * 100),
+            'free_cells': int(free_cells),
+            'occupied_cells': int(occupied_cells),
+            'elevated_cells': int(elevated_cells),
+            'mean_confidence': float(np.mean(self.confidence_grid))
+        }
 
 
 class LandingPadDetector:
     """Detects landing pads using z-range sensor height measurements"""
     
-    def __init__(self):
+    def __init__(self, grid_bounds: Optional[Tuple[float, float, float, float]] = None,
+                 grid_resolution: float = 0.1):
         self.logger = logging.getLogger(__name__)
         
         # Detection parameters (configured via config)
@@ -39,7 +265,14 @@ class LandingPadDetector:
         self.calculated_center = None
         self.center_confidence = 0.0
         
-        self.logger.info("Landing pad detector initialized")
+        # Grid map integration
+        if grid_bounds:
+            self.grid_map = GridMap(grid_bounds, grid_resolution)
+        else:
+            # Default bounds - can be updated later
+            self.grid_map = GridMap((-2.0, 2.0, -2.0, 2.0), grid_resolution)
+        
+        self.logger.info("Landing pad detector initialized with grid map")
     
     def configure_detection(self, params: Dict[str, Any]) -> None:
         """Configure detection parameters from config"""
@@ -91,6 +324,9 @@ class LandingPadDetector:
         self.height_data.append(height)
         self.position_data.append(position)
         
+        # Update grid map with measurement
+        self.grid_map.update_cell(position[0], position[1], height, CellState.FREE)
+        
         # Initialize baseline if not set
         if self.baseline_height is None and len(self.height_data) >= 5:
             self.baseline_height = np.median(list(self.height_data)[-5:])
@@ -140,6 +376,9 @@ class LandingPadDetector:
                     'direction': self.flight_direction,
                     'z_score': z_score
                 })
+                
+                # Mark as elevated in grid map
+                self.grid_map.update_cell(position[0], position[1], current_height, CellState.ELEVATED)
                 
                 self.logger.info(f"Platform edge detected at ({position[0]:.3f}, {position[1]:.3f}) "
                                f"height_diff={height_diff:.3f}m, z_score={z_score:.2f}")
@@ -209,7 +448,7 @@ class LandingPadDetector:
     
     def get_detection_statistics(self) -> Dict[str, Any]:
         """Get detection statistics for debugging"""
-        return {
+        stats = {
             'total_measurements': len(self.height_data),
             'total_border_points': len(self.peak_positions),
             'baseline_height': self.baseline_height,
@@ -217,13 +456,36 @@ class LandingPadDetector:
             'center_confidence': self.center_confidence,
             'detection_active': self.detection_active
         }
+        
+        # Add grid map statistics
+        grid_stats = self.grid_map.get_exploration_progress()
+        stats.update({f'grid_{k}': v for k, v in grid_stats.items()})
+        
+        return stats
+    
+    def get_grid_map(self) -> GridMap:
+        """Get the grid map instance"""
+        return self.grid_map
+    
+    def get_elevated_regions(self) -> List[Dict[str, Any]]:
+        """Get elevated regions from grid map"""
+        return self.grid_map.find_elevated_regions()
+    
+    def get_unexplored_areas(self) -> List[Tuple[float, float]]:
+        """Get unexplored areas for search planning"""
+        return self.grid_map.find_unexplored_cells()
 
 
 class SearchPattern:
     """Generates search patterns for systematic area coverage"""
     
-    def __init__(self):
+    def __init__(self, grid_map: Optional[GridMap] = None):
         self.logger = logging.getLogger(__name__)
+        self.grid_map = grid_map
+    
+    def set_grid_map(self, grid_map: GridMap) -> None:
+        """Set the grid map for informed search planning"""
+        self.grid_map = grid_map
     
     def generate_grid_pattern(self, center: Tuple[float, float], 
                             grid_size: float = 0.5, 
@@ -260,6 +522,73 @@ class SearchPattern:
                     waypoints.append((x, y, direction))
         
         self.logger.info(f"Generated {len(waypoints)} waypoints for grid search")
+        return waypoints
+    
+    def generate_adaptive_pattern(self, center: Tuple[float, float], 
+                                max_distance: float = 1.0,
+                                prioritize_unexplored: bool = True) -> List[Tuple[float, float, str]]:
+        """
+        Generate an adaptive search pattern based on grid map information.
+        
+        Args:
+            center: (x, y) center of search area
+            max_distance: Maximum distance from center
+            prioritize_unexplored: Whether to prioritize unexplored areas
+            
+        Returns:
+            List of (x, y, direction) waypoints
+        """
+        if not self.grid_map:
+            self.logger.warning("No grid map available, falling back to regular grid pattern")
+            return self.generate_grid_pattern(center, max_distance * 2, 0.3)
+        
+        waypoints = []
+        cx, cy = center
+        
+        # Get unexplored cells within range
+        unexplored = self.grid_map.find_unexplored_cells()
+        
+        # Filter by distance
+        candidates = []
+        for x, y in unexplored:
+            distance = math.sqrt((x - cx)**2 + (y - cy)**2)
+            if distance <= max_distance:
+                candidates.append((x, y, distance))
+        
+        # Sort by distance (closest first) or by priority
+        if prioritize_unexplored:
+            candidates.sort(key=lambda p: p[2])  # Sort by distance
+        
+        # Add waypoints with directions
+        prev_x, prev_y = center
+        for x, y, _ in candidates:
+            # Determine direction based on movement
+            dx = x - prev_x
+            dy = y - prev_y
+            
+            if abs(dx) > abs(dy):
+                direction = 'right' if dx > 0 else 'left'
+            else:
+                direction = 'forward' if dy > 0 else 'backward'
+            
+            waypoints.append((x, y, direction))
+            prev_x, prev_y = x, y
+        
+        # If no unexplored areas, fall back to elevated regions
+        if not waypoints:
+            elevated = self.grid_map.find_elevated_regions()
+            for region in elevated[:10]:  # Limit to top 10
+                x, y = region['position']
+                distance = math.sqrt((x - cx)**2 + (y - cy)**2)
+                if distance <= max_distance:
+                    waypoints.append((x, y, 'forward'))
+        
+        # If still no waypoints, generate a basic grid
+        if not waypoints:
+            waypoints = self.generate_grid_pattern(center, max_distance * 2, 0.3)
+        
+        self.logger.info(f"Generated {len(waypoints)} adaptive waypoints "
+                        f"({len([w for w in waypoints if w[2] != 'forward'])} based on grid map)")
         return waypoints
     
     def generate_spiral_pattern(self, center: Tuple[float, float], 
