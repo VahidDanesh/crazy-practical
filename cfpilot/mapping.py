@@ -2,32 +2,11 @@
 
 Grid map library in python
 
-author: Atsushi Sakai
+author: Atsushi Sakai, some improvements by Vahid Danesh
 
 """
-from functools import total_ordering
 import matplotlib.pyplot as plt
 import numpy as np
-
-
-@total_ordering
-class FloatGrid:
-
-    def __init__(self, init_val=0.0):
-        self.data = init_val
-
-    def get_float_data(self):
-        return self.data
-
-    def __eq__(self, other):
-        if not isinstance(other, FloatGrid):
-            return NotImplemented
-        return self.get_float_data() == other.get_float_data()
-
-    def __lt__(self, other):
-        if not isinstance(other, FloatGrid):
-            return NotImplemented
-        return self.get_float_data() < other.get_float_data()
 
 
 class GridMap:
@@ -35,8 +14,8 @@ class GridMap:
     GridMap class
     """
 
-    def __init__(self, width, height, resolution,
-                 center_x, center_y, init_val=FloatGrid(0.0)):
+    def __init__(self, width: int, height: int, resolution: float,
+                 center_x: float, center_y: float, init_val: float = 0.0):
         """__init__
 
         :param width: number of grid for width
@@ -44,7 +23,7 @@ class GridMap:
         :param resolution: grid resolution [m]
         :param center_x: center x position  [m]
         :param center_y: center y position [m]
-        :param init_val: initial value for all grid
+        :param init_val: initial value for all grid (float)
         """
         self.width = width
         self.height = height
@@ -56,10 +35,10 @@ class GridMap:
         self.left_lower_y = self.center_y - self.height / 2.0 * self.resolution
 
         self.n_data = self.width * self.height
-        self.data = [init_val] * self.n_data
-        self.data_type = type(init_val)
+        # Use NumPy array for fast operations (store floats directly)
+        self.data = np.full((self.height, self.width), init_val, dtype=float)
 
-    def get_value_from_xy_index(self, x_ind, y_ind):
+    def get_value_from_xy_index(self, x_ind: int, y_ind: int) -> float:
         """get_value_from_xy_index
 
         when the index is out of grid map area, return None
@@ -67,19 +46,17 @@ class GridMap:
         :param x_ind: x index
         :param y_ind: y index
         """
-
-        grid_ind = self.calc_grid_index_from_xy_index(x_ind, y_ind)
-
-        if 0 <= grid_ind < self.n_data:
-            return self.data[grid_ind]
+        if 0 <= x_ind < self.width and 0 <= y_ind < self.height:
+            return self.data[y_ind, x_ind]
         else:
             return None
 
-    def get_xy_index_from_xy_pos(self, x_pos, y_pos):
+    def get_xy_index_from_xy_pos(self, x_pos: float, y_pos: float) -> tuple:
         """get_xy_index_from_xy_pos
 
         :param x_pos: x position [m]
         :param y_pos: y position [m]
+        :return: tuple of (x_ind, y_ind) or (None, None) if out of bounds
         """
         x_ind = self.calc_xy_index_from_position(
             x_pos, self.left_lower_x, self.width)
@@ -88,61 +65,56 @@ class GridMap:
 
         return x_ind, y_ind
 
-    def set_value_from_xy_pos(self, x_pos, y_pos, val):
+    def set_value_from_xy_pos(self, x_pos: float, y_pos: float, val: float) -> bool:
         """set_value_from_xy_pos
 
         return bool flag, which means setting value is succeeded or not
 
         :param x_pos: x position [m]
         :param y_pos: y position [m]
-        :param val: grid value
+        :param val: grid value (float)
         """
-
         x_ind, y_ind = self.get_xy_index_from_xy_pos(x_pos, y_pos)
 
-        if (not x_ind) or (not y_ind):
+        if x_ind is None or y_ind is None:
             return False  # NG
 
         flag = self.set_value_from_xy_index(x_ind, y_ind, val)
 
         return flag
 
-    def set_value_from_xy_index(self, x_ind, y_ind, val):
+    def set_value_from_xy_index(self, x_ind: int, y_ind: int, val: float) -> bool:
         """set_value_from_xy_index
 
         return bool flag, which means setting value is succeeded or not
 
         :param x_ind: x index
         :param y_ind: y index
-        :param val: grid value
+        :param val: grid value (float)
         """
+        if x_ind is None or y_ind is None:
+            return False
 
-        if (x_ind is None) or (y_ind is None):
-            return False, False
-
-        grid_ind = int(y_ind * self.width + x_ind)
-
-        if 0 <= grid_ind < self.n_data and isinstance(val, self.data_type):
-            self.data[grid_ind] = val
+        if 0 <= x_ind < self.width and 0 <= y_ind < self.height:
+            self.data[y_ind, x_ind] = float(val)
             return True  # OK
         else:
             return False  # NG
 
-    def set_value_from_polygon(self, pol_x, pol_y, val, inside=True):
+    def set_value_from_polygon(self, pol_x, pol_y, val: float, inside: bool = True):
         """set_value_from_polygon
 
         Setting value inside or outside polygon
 
         :param pol_x: x position list for a polygon
         :param pol_y: y position list for a polygon
-        :param val: grid value
+        :param val: grid value (float)
         :param inside: setting data inside or outside
         """
-
         # making ring polygon
         if (pol_x[0] != pol_x[-1]) or (pol_y[0] != pol_y[-1]):
-            np.append(pol_x, pol_x[0])
-            np.append(pol_y, pol_y[0])
+            pol_x = np.append(pol_x, pol_x[0])
+            pol_y = np.append(pol_y, pol_y[0])
 
         # setting value for all grid
         for x_ind in range(self.width):
@@ -155,16 +127,38 @@ class GridMap:
                 if flag is inside:
                     self.set_value_from_xy_index(x_ind, y_ind, val)
 
-    def calc_grid_index_from_xy_index(self, x_ind, y_ind):
+    def add_obstacle(self, center_x: float, center_y: float, radius: float, 
+                     val: float = 1.0, n_sides: int = 16):
+        """Add a circular obstacle to the grid map
+        
+        The circle is approximated by a polygon with n_sides (default 16).
+        
+        :param center_x: x position of obstacle center [m]
+        :param center_y: y position of obstacle center [m]
+        :param radius: radius of the obstacle [m]
+        :param val: grid value for the obstacle (default 1.0)
+        :param n_sides: number of sides for polygon approximation (default 16)
+        """
+        # Generate polygon vertices approximating a circle
+        angles = np.linspace(0, 2 * np.pi, n_sides, endpoint=False)
+        pol_x = center_x + radius * np.cos(angles)
+        pol_y = center_y + radius * np.sin(angles)
+        
+        # Set values inside the polygon
+        self.set_value_from_polygon(pol_x, pol_y, val, inside=True)
+
+    def calc_grid_index_from_xy_index(self, x_ind: int, y_ind: int) -> int:
+        """Calculate flat grid index from x,y indices (for compatibility)"""
         grid_ind = int(y_ind * self.width + x_ind)
         return grid_ind
 
-    def calc_xy_index_from_grid_index(self, grid_ind):
+    def calc_xy_index_from_grid_index(self, grid_ind: int) -> tuple:
+        """Calculate x,y indices from flat grid index (for compatibility)"""
         y_ind, x_ind = divmod(grid_ind, self.width)
         return x_ind, y_ind
 
-    def calc_grid_index_from_xy_pos(self, x_pos, y_pos):
-        """get_xy_index_from_xy_pos
+    def calc_grid_index_from_xy_pos(self, x_pos: float, y_pos: float) -> int:
+        """calc_grid_index_from_xy_pos
 
         :param x_pos: x position [m]
         :param y_pos: y position [m]
@@ -176,11 +170,13 @@ class GridMap:
 
         return self.calc_grid_index_from_xy_index(x_ind, y_ind)
 
-    def calc_grid_central_xy_position_from_grid_index(self, grid_ind):
+    def calc_grid_central_xy_position_from_grid_index(self, grid_ind: int) -> tuple:
+        """Calculate central x,y position from flat grid index"""
         x_ind, y_ind = self.calc_xy_index_from_grid_index(grid_ind)
         return self.calc_grid_central_xy_position_from_xy_index(x_ind, y_ind)
 
-    def calc_grid_central_xy_position_from_xy_index(self, x_ind, y_ind):
+    def calc_grid_central_xy_position_from_xy_index(self, x_ind: int, y_ind: int) -> tuple:
+        """Calculate central x,y position from x,y indices"""
         x_pos = self.calc_grid_central_xy_position_from_index(
             x_ind, self.left_lower_x)
         y_pos = self.calc_grid_central_xy_position_from_index(
@@ -188,18 +184,20 @@ class GridMap:
 
         return x_pos, y_pos
 
-    def calc_grid_central_xy_position_from_index(self, index, lower_pos):
+    def calc_grid_central_xy_position_from_index(self, index: int, lower_pos: float) -> float:
+        """Calculate central position from index"""
         return lower_pos + index * self.resolution + self.resolution / 2.0
 
-    def calc_xy_index_from_position(self, pos, lower_pos, max_index):
+    def calc_xy_index_from_position(self, pos: float, lower_pos: float, max_index: int) -> int:
+        """Calculate index from position"""
         ind = int(np.floor((pos - lower_pos) / self.resolution))
         if 0 <= ind <= max_index:
             return ind
         else:
             return None
 
-    def check_occupied_from_xy_index(self, x_ind, y_ind, occupied_val):
-
+    def check_occupied_from_xy_index(self, x_ind: int, y_ind: int, occupied_val: float) -> bool:
+        """Check if grid cell is occupied based on threshold value"""
         val = self.get_value_from_xy_index(x_ind, y_ind)
 
         if val is None or val >= occupied_val:
@@ -207,7 +205,8 @@ class GridMap:
         else:
             return False
 
-    def expand_grid(self, occupied_val=FloatGrid(1.0)):
+    def expand_grid(self, occupied_val: float = 1.0):
+        """Expand occupied grid cells to neighboring cells"""
         x_inds, y_inds, values = [], [], []
 
         for ix in range(self.width):
@@ -256,24 +255,48 @@ class GridMap:
         print("left_lower_y:", self.left_lower_y)
         print("n_data:", self.n_data)
 
-    def plot_grid_map(self, ax=None):
-        float_data_array = np.array([d.get_float_data() for d in self.data])
-        grid_data = np.reshape(float_data_array, (self.height, self.width))
+    def plot_grid_map(self, ax=None, use_world_coords=False):
+        """Plot the grid map as a heatmap
+        
+        :param ax: matplotlib axis to plot on (creates new if None)
+        :param use_world_coords: if True, use real world coordinates; if False, use indices
+        """
+        grid_data = self.data
         if not ax:
             fig, ax = plt.subplots()
-        heat_map = ax.pcolor(grid_data, cmap="Blues", vmin=0.0, vmax=1.0)
-        plt.axis("equal")
+        
+        if use_world_coords:
+            # Calculate extent in world coordinates
+            extent = [
+                self.left_lower_x,
+                self.left_lower_x + self.width * self.resolution,
+                self.left_lower_y,
+                self.left_lower_y + self.height * self.resolution
+            ]
+            heat_map = ax.imshow(grid_data, cmap="Blues", vmin=0.0, vmax=1.0,
+                                origin='lower', extent=extent)
+            ax.set_xlabel('X Position [m]')
+            ax.set_ylabel('Y Position [m]')
+            plt.axis("equal")
+        else:
+            heat_map = ax.pcolor(grid_data, cmap="Blues", vmin=0.0, vmax=1.0)
+            ax.set_xlabel('X Index')
+            ax.set_ylabel('Y Index')
+            plt.axis("equal")
+        
+        ax.set_title('Grid Map')
 
         return heat_map
 
 
 def polygon_set_demo():
+    """Demo function showing polygon-based grid value setting"""
     ox = [0.0, 4.35, 20.0, 50.0, 100.0, 130.0, 40.0]
     oy = [0.0, -4.15, -20.0, 0.0, 30.0, 60.0, 80.0]
 
     grid_map = GridMap(600, 290, 0.7, 60.0, 30.5)
 
-    grid_map.set_value_from_polygon(ox, oy, FloatGrid(1.0), inside=False)
+    grid_map.set_value_from_polygon(ox, oy, 1.0, inside=False)
 
     grid_map.plot_grid_map()
 
@@ -282,14 +305,15 @@ def polygon_set_demo():
 
 
 def position_set_demo():
+    """Demo function showing position-based grid value setting"""
     grid_map = GridMap(100, 120, 0.5, 10.0, -0.5)
 
-    grid_map.set_value_from_xy_pos(10.1, -1.1, FloatGrid(1.0))
-    grid_map.set_value_from_xy_pos(10.1, -0.1, FloatGrid(1.0))
-    grid_map.set_value_from_xy_pos(10.1, 1.1, FloatGrid(1.0))
-    grid_map.set_value_from_xy_pos(11.1, 0.1, FloatGrid(1.0))
-    grid_map.set_value_from_xy_pos(10.1, 0.1, FloatGrid(1.0))
-    grid_map.set_value_from_xy_pos(9.1, 0.1, FloatGrid(1.0))
+    grid_map.set_value_from_xy_pos(10.1, -1.1, 1.0)
+    grid_map.set_value_from_xy_pos(10.1, -0.1, 1.0)
+    grid_map.set_value_from_xy_pos(10.1, 1.1, 1.0)
+    grid_map.set_value_from_xy_pos(11.1, 0.1, 1.0)
+    grid_map.set_value_from_xy_pos(10.1, 0.1, 1.0)
+    grid_map.set_value_from_xy_pos(9.1, 0.1, 1.0)
 
     grid_map.plot_grid_map()
 
