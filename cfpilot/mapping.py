@@ -224,6 +224,24 @@ class GridMap:
             self.set_value_from_xy_index(ix, iy - 1, val=value)
             self.set_value_from_xy_index(ix - 1, iy - 1, val=value)
 
+    def occupy_boundaries(self, boundary_width: int = 1, val: float = 1.0):
+        """Occupy the boundary cells of the grid map using vectorized operations
+        
+        :param boundary_width: width of the boundary to occupy (in grid cells)
+        :param val: value to set for the boundary cells
+        """
+        # Validate boundary_width
+        max_boundary = min(self.width // 2, self.height // 2)
+        boundary_width = min(boundary_width, max_boundary)
+        
+        # Top and bottom boundaries
+        self.data[:boundary_width, :] = val  # Bottom
+        self.data[-boundary_width:, :] = val  # Top
+        
+        # Left and right boundaries
+        self.data[:, :boundary_width] = val  # Left
+        self.data[:, -boundary_width:] = val  # Right
+
     @staticmethod
     def check_inside_polygon(iox, ioy, x, y):
 
