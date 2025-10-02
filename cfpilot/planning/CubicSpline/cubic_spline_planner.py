@@ -376,6 +376,29 @@ class CubicSpline2D:
 
 
 def calc_spline_course(x, y, ds=0.1):
+    """
+    calc course with cubic spline
+
+    Parameters
+    ----------
+        x: x position list of way points
+
+        y: y position list of way points
+
+        ds: distance of each interpolated points
+
+    Returns
+    -------
+        rx: x position list of interpolated course
+
+        ry: y position list of interpolated course
+
+        ryaw: yaw angle list of interpolated course
+
+        rk: curvature list of interpolated course
+        
+        s: list of distance from the start point
+    """
     sp = CubicSpline2D(x, y)
     s = list(np.arange(0, sp.s[-1], ds))
 
