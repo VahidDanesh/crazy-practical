@@ -53,7 +53,7 @@ class DStarLite:
         Node(-1, -1, math.sqrt(2))
     ]
 
-    def __init__(self, ox: list, oy: list):
+    def __init__(self, ox: list, oy: list, show_animation: bool = False):
         # Ensure that within the algorithm implementation all node coordinates
         # are indices in the grid and extend
         # from 0 to abs(<axis>_max - <axis>_min)
@@ -73,7 +73,8 @@ class DStarLite:
         self.g = self.create_grid(float("inf"))
         self.detected_obstacles_xy: set[tuple[int, int]] = set()
         self.xy = np.empty((0, 2))
-        if show_animation:
+        self.show_animation = show_animation
+        if self.show_animation:
             self.detected_obstacles_for_plotting_x = list()  # type: ignore
             self.detected_obstacles_for_plotting_y = list()  # type: ignore
         self.initialized = False
@@ -204,7 +205,7 @@ class DStarLite:
                     continue
                 changed_vertices.append(spoofed_obstacle)
                 self.detected_obstacles_xy.add((spoofed_obstacle.x, spoofed_obstacle.y))
-                if show_animation:
+                if self.show_animation:
                     self.detected_obstacles_for_plotting_x.append(
                         spoofed_obstacle.x + self.x_min_world)
                     self.detected_obstacles_for_plotting_y.append(
@@ -225,7 +226,7 @@ class DStarLite:
                 return changed_vertices
             changed_vertices.append(Node(x, y))
             self.detected_obstacles_xy.add((x, y))
-            if show_animation:
+            if self.show_animation:
                 self.detected_obstacles_for_plotting_x.append(x +
                                                               self.x_min_world)
                 self.detected_obstacles_for_plotting_y.append(y +
@@ -277,7 +278,7 @@ class DStarLite:
         pathx.append(self.start.x + self.x_min_world)
         pathy.append(self.start.y + self.y_min_world)
 
-        if show_animation:
+        if self.show_animation:
             current_path = self.compute_current_path()
             previous_path = current_path.copy()
             previous_path_image = self.display_path(previous_path, ".c",
@@ -294,7 +295,7 @@ class DStarLite:
                              self.g[sprime.x][sprime.y])
             pathx.append(self.start.x + self.x_min_world)
             pathy.append(self.start.y + self.y_min_world)
-            if show_animation:
+            if self.show_animation:
                 current_path.pop(0)
                 plt.plot(pathx, pathy, "-r")
                 plt.pause(pause_time)
@@ -311,7 +312,7 @@ class DStarLite:
                     self.update_vertex(u)
                 self.compute_shortest_path()
 
-                if show_animation:
+                if self.show_animation:
                     new_path = self.compute_current_path()
                     if not self.compare_paths(current_path, new_path):
                         current_path_image[0].remove()

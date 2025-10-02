@@ -36,7 +36,7 @@ class GridMap:
 
         self.n_data = self.width * self.height
         # Use NumPy array for fast operations (store floats directly)
-        self.data = np.full((self.height, self.width), init_val, dtype=float)
+        self.data = np.full((self.width, self.height), init_val, dtype=float)
 
     def get_value_from_xy_index(self, x_ind: int, y_ind: int) -> float:
         """get_value_from_xy_index
@@ -47,7 +47,7 @@ class GridMap:
         :param y_ind: y index
         """
         if 0 <= x_ind < self.width and 0 <= y_ind < self.height:
-            return self.data[y_ind, x_ind]
+            return self.data[x_ind, y_ind]
         else:
             return None
 
@@ -64,6 +64,23 @@ class GridMap:
             y_pos, self.left_lower_y, self.height)
 
         return x_ind, y_ind
+    
+    def get_xy_poss_from_xy_indexes(self, x_ind: list, y_ind: list) -> tuple:
+        """get_pos_from_xy_index
+
+        :param x_ind: x index list
+        :param y_ind: y index list
+        :return: tuple of (x_pos, y_pos) or (None, None) if out of bounds
+        """
+        x_ind = np.array(x_ind)
+        y_ind = np.array(y_ind)
+
+        if np.all((0 <= x_ind) & (x_ind < self.width)) and np.all((0 <= y_ind) & (y_ind < self.height)):
+            x_pos = self.left_lower_x + x_ind * self.resolution + self.resolution / 2.0
+            y_pos = self.left_lower_y + y_ind * self.resolution + self.resolution / 2.0
+            return x_pos, y_pos
+        else:
+            return None, None
 
     def set_value_from_xy_pos(self, x_pos: float, y_pos: float, val: float) -> bool:
         """set_value_from_xy_pos
@@ -96,7 +113,7 @@ class GridMap:
             return False
 
         if 0 <= x_ind < self.width and 0 <= y_ind < self.height:
-            self.data[y_ind, x_ind] = float(val)
+            self.data[x_ind, y_ind] = float(val)
             return True  # OK
         else:
             return False  # NG
@@ -209,12 +226,8 @@ class GridMap:
         """Expand occupied grid cells to neighboring cells"""
         x_inds, y_inds, values = [], [], []
 
-        for ix in range(self.width):
-            for iy in range(self.height):
-                if self.check_occupied_from_xy_index(ix, iy, occupied_val):
-                    x_inds.append(ix)
-                    y_inds.append(iy)
-                    values.append(self.get_value_from_xy_index(ix, iy))
+        x_inds, y_inds = np.where(self.data >= occupied_val)
+        values = self.data[x_inds, y_inds]
 
         for (ix, iy, value) in zip(x_inds, y_inds, values):
             self.set_value_from_xy_index(ix + 1, iy, val=value)
@@ -279,7 +292,8 @@ class GridMap:
         :param ax: matplotlib axis to plot on (creates new if None)
         :param use_world_coords: if True, use real world coordinates; if False, use indices
         """
-        grid_data = self.data
+        grid_data = self.data.T # (data stored in (width, height) or (x, y) order, 
+                                # so transpose for correct orientation for plot)
         if not ax:
             fig, ax = plt.subplots()
         
